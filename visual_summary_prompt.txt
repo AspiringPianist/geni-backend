@@ -1,0 +1,17 @@
+Generate a Visual Summary in JSON format for the topic "{title}" The summary should be divided into 3-5 sections, each representing a key event or era. For each section, include:
+- A "title" (short, descriptive heading),
+- A "text" field (2-3 sentences summarizing the event/era),
+- Placeholder fields for "imageUrl" and "audioUrl" (set as empty strings for now).
+
+Ensure the content is engaging, concise, and suitable for an immersive, story-like presentation with visuals and audio narration. The JSON should follow this schema:
+{
+  "title": "Visual Summary Title",
+  "sections": [
+    {
+      "title": "Section Title",
+      "text": "Section summary text",
+      "imageUrl": "",
+      "audioUrl": ""
+    }
+  ]
+}

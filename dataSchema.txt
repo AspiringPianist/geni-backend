@@ -1,0 +1,95 @@
+collections:
+    users:
+      documents:
+        {userId}: {
+          role: "student" | "teacher",
+          email: "user@example.com",
+          name: "User Name",
+          enrolledClassrooms: ["{classroomId}"],  // Array of classroom IDs where user is enrolled
+          teachingClassrooms: ["{classroomId}"]  // Array of classroom IDs where user is teaching
+          // ... other user data
+        }
+
+    files:
+      documents:
+        {fileId}: {
+          userId: "{userId}", // Reference to user document
+          fileName: "data.json",
+          fileType: "student_upload" | "teacher_upload" | "ai_generated",
+          uploadTimestamp: timestamp,
+          jsonData: { // JSON file content
+            // ... your JSON data structure ...
+          },
+          chatId: "{chatId}" // Optional: Reference to chat document (only for uploaded files)
+        }
+
+    chats:
+      documents:
+        {chatId}: {
+          userId: "{userId}", // Reference to user document (chat creator)
+          title: "Chat Title",
+          startTimestamp: timestamp,
+          classroomId: "{classroomId}",  // Optional reference to classroom
+          messages: { // Subcollection of messages
+            documents:
+              {messageId}: {
+                senderId: "{userId}" | "ai", // "ai" for AI-generated messages
+                text: "Message text...",
+                timestamp: timestamp,
+                ragMetadata: {
+                  retrievedDocumentIds: ["{fileId1}", "{fileId2}"], // Array of file document references
+                  geminiEmbeddings: [0.1, 0.2, 0.3, ...] // Array of embeddings
+                },
+                retrievalAugmentedGeneration: "RAG response...",
+                generatedFileId: "{fileId}" // Optional: Reference to AI-generated file
+              }
+          }
+        }
+
+    classrooms:
+      documents:
+        {classroomId}: {
+          name: "Classroom Name",
+          description: "Classroom Description",
+          teacherId: "{userId}",
+          createdAt: timestamp,
+          students: {
+            {studentId}: {
+              joinedAt: timestamp,
+              name: "Student Name",
+              email: "student@example.com"
+            }
+          },
+          assignments: {
+            documents:
+              {assignmentId}: {
+                title: "Assignment Title",
+                description: "Assignment Description",
+                dueDate: timestamp,
+                createdAt: timestamp,
+                totalPoints: number,
+                submissions: {
+                  {studentId}: {
+                    submittedAt: timestamp,
+                    status: "pending" | "submitted" | "graded",
+                    grade: number,
+                    feedback: "Feedback text",
+                    fileUrl: "https://example.com/file"
+                  }
+                }
+              }
+          },
+          chats: {
+            documents:
+              {chatId}: {
+                messages: [
+                  {
+                    senderId: "{userId}" | "ai" | "system",
+                    text: "Message text...",
+                    timestamp: timestamp,
+                    type: "user" | "ai" | "system"
+                  }
+                ]
+              }
+          }
+        }
