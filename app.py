@@ -33,7 +33,7 @@ app = FastAPI()
 # Update CORS settings
 origins = [
     "http://localhost:5173",  # Development
-    "https://your-frontend-url.com",  # Production frontend URL
+    "https://geni-frontend-green.vercel.app",  # Replace with your Vercel URL
 ]
 
 app.add_middleware(
