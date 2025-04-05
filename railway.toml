@@ -1,0 +1,11 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+
+[env]
+PYTHON_VERSION = "3.9"

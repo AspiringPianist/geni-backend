@@ -68,14 +68,42 @@ collections:
                 dueDate: timestamp,
                 createdAt: timestamp,
                 totalPoints: number,
-                submissions: {
-                  {studentId}: {
-                    submittedAt: timestamp,
-                    status: "pending" | "submitted" | "graded",
-                    grade: number,
-                    feedback: "Feedback text",
-                    fileUrl: "https://example.com/file"
+                submissionCount: number,  // Track total submissions
+                questions: [
+                  {
+                    question_text: string,
+                    marks: number,
+                    type: "TEXT" | "MULTIPLE_CHOICE"
                   }
+                ],
+                submissions: {  // Map of studentId to submission
+                  {studentId}: {  // High-level submission metadata
+                    submittedAt: timestamp,
+                    status: "pending_review" | "graded",
+                    grade: number | null,
+                    feedback: string | null
+                  }
+                },
+                submissionDetails: {  // Subcollection for detailed submission data
+                  documents:
+                    {studentId}: {  // Full submission content
+                      submittedAt: timestamp,
+                      status: "pending_review" | "graded",
+                      answerText: string,  // JSON string of answers
+                      answers: {  // Parsed answer object
+                        [questionIndex: number]: string
+                      },
+                      grade: number | null,
+                      feedback: string | null,
+                      fileUrl: string | null,
+                      studentId: string,
+                      gradedBy: "AI" | "teacher" | null,
+                      aiGrading: {
+                        confidence: number,
+                        suggestedGrade: number,
+                        explanation: string
+                      } | null
+                    }
                 }
               }
           },

@@ -1,0 +1,7 @@
+firebase-admin
+fastapi
+uvicorn
+pydantic
+sentence-transformers
+torch
+transformers

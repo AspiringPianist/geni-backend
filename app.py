@@ -1,6 +1,6 @@
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
-from fastapi import FastAPI, Header, HTTPException, Depends, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
@@ -17,6 +17,9 @@ import tempfile
 import os
 import random
 import string
+import json
+from sentence_transformers import SentenceTransformer, util
+import torch
 # Pip installs:
 # pip install firebase-admin fastapi uvicorn pydantic
 
@@ -27,8 +30,11 @@ firebase_admin.initialize_app(cred)
 db = firestore.client()
 app = FastAPI()
 
-# Configure CORS
-origins = ["*"]
+# Update CORS settings
+origins = [
+    "http://localhost:5173",  # Development
+    "https://your-frontend-url.com",  # Production frontend URL
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +46,13 @@ app.add_middleware(
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+try:
+    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+except Exception as e:
+    logger.error(f"Failed to load sentence transformer model: {str(e)}")
+    model = None
+
 # Pydantic Models for Request/Response Data
 class User(BaseModel):
     role: str
@@ -87,6 +100,9 @@ class CreateClassroomRequest(BaseModel):
 
 class JoinClassroomRequest(BaseModel):
     code: str
+
+class GradeRequest(BaseModel):
+    useAI: bool = False
 
 
 def verify_token(id_token: str) -> Dict[str, Any]:
@@ -467,7 +483,7 @@ async def create_classroom_assignment(
     if not result:
         raise HTTPException(status_code=500, detail="Failed to generate assignment")
 
-    # Save to Firestore
+    # Save to Firestore with submissionCount
     assignment_ref = db.collection("classrooms").document(classroom_id).collection("assignments").document()
     assignment_ref.set({
         "title": assignment.topic,
@@ -475,7 +491,8 @@ async def create_classroom_assignment(
         "dueDate": None,  # Teacher can set this later
         "createdAt": firestore.SERVER_TIMESTAMP,
         "totalPoints": 100,
-        "questions": result.get("content", {}).get("questions", [])
+        "questions": result.get("content", {}).get("questions", []),
+        "submissionCount": 0  # Initialize submission count
     })
     
     return {"id": assignment_ref.id, **result}
@@ -484,46 +501,87 @@ async def create_classroom_assignment(
 async def submit_assignment(
     classroom_id: str,
     assignment_id: str,
-    file: UploadFile,
+    answer_text: str = Form(...),
+    file: Optional[UploadFile] = None,
     user_id: str = Depends(get_user_id)
 ):
-    # Create temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+    # Verify classroom and assignment exist
+    classroom_ref = db.collection("classrooms").document(classroom_id)
+    assignment_ref = classroom_ref.collection("assignments").document(assignment_id)
+    
+    if not classroom_ref.get().exists:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+    if not assignment_ref.get().exists:
+        raise HTTPException(status_code=404, detail="Assignment not found")
 
+    # Check if student has already submitted
+    assignment_doc = assignment_ref.get()
+    assignment_data = assignment_doc.to_dict()
+    submissions = assignment_data.get("submissions", {})
+    
+    is_resubmission = user_id in submissions
+    
+    # Parse the answers JSON
     try:
-        upload_handler = UploadAssignment()
-        submission_id = upload_handler.upload_submission(
-            file_path=tmp_path,
-            assignment_id=assignment_id,
-            student_id=user_id
-        )
+        answers = json.loads(answer_text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid answer format")
+    
+    submission_data = {
+        "submittedAt": firestore.SERVER_TIMESTAMP,
+        "status": "pending_review",
+        "answerText": answer_text,
+        "answers": answers,  # Store structured answers
+        "grade": None,
+        "feedback": None,
+        "studentId": user_id,
+    }
 
-        if submission_id:
-            # Update assignment submission status
-            db.collection("classrooms").document(classroom_id)\
-              .collection("assignments").document(assignment_id)\
-              .set({
-                  f"submissions.{user_id}": {
-                      "submittedAt": firestore.SERVER_TIMESTAMP,
-                      "status": "submitted",
-                      "fileUrl": tmp_path  # In production, this would be a cloud storage URL
-                  }
-              }, merge=True)
-            
-            return {"status": "success", "submissionId": submission_id}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to upload submission")
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    submission_id = None
+    # Handle file upload if provided
+    if file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            upload_handler = UploadAssignment()
+            submission_id = upload_handler.upload_submission(
+                file_path=tmp_path,
+                assignment_id=assignment_id,
+                student_id=user_id
+            )
+            if submission_id:
+                submission_data["fileUrl"] = tmp_path  # In production, this would be a cloud storage URL
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    # Update the submission in a subcollection for better organization
+    submission_ref = assignment_ref.collection("submissions").document(user_id)
+    submission_ref.set(submission_data)
+
+    # Update the assignment metadata
+    batch = db.batch()
+    if not is_resubmission:
+        batch.update(assignment_ref, {
+            "submissionCount": firestore.Increment(1),
+            f"submissions.{user_id}": {
+                "submittedAt": firestore.SERVER_TIMESTAMP,
+                "status": "pending_review"
+            }
+        })
+    
+    batch.commit()
+    
+    return {"status": "success", "submissionId": user_id}
 
 @app.post("/api/classrooms/{classroom_id}/assignments/{assignment_id}/grade")
 async def grade_assignment(
     classroom_id: str,
     assignment_id: str,
+    request: GradeRequest,
     user_id: str = Depends(get_user_id)
 ):
     # Verify user is teacher
@@ -531,8 +589,103 @@ async def grade_assignment(
     if not classroom.exists or classroom.to_dict()["teacherId"] != user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    checker = AssignmentChecker()
-    results = checker.process_all_submissions(assignment_id)
+    if request.useAI:
+        if not model:
+            raise HTTPException(
+                status_code=500, 
+                detail="AI grading is not available - model failed to load"
+            )
+            
+        try:
+            # Get assignment and submissions
+            assignment_ref = db.collection("classrooms").document(classroom_id)\
+                              .collection("assignments").document(assignment_id)
+            assignment_doc = assignment_ref.get()
+            assignment_data = assignment_doc.to_dict()
+            
+            submissions_ref = assignment_ref.collection("submissions")
+            submissions = {doc.id: doc.to_dict() for doc in submissions_ref.stream()}
+            
+            results = {"status": "success", "results": {}}
+            
+            # Grade each submission
+            for student_id, submission in submissions.items():
+                if submission.get("status") != "graded":
+                    answers = submission.get("answers", {})
+                    total_score = 0
+                    feedback = []
+                    
+                    for q_idx, question in enumerate(assignment_data["questions"]):
+                        student_answer = answers.get(str(q_idx), "").strip()
+                        if not student_answer:
+                            continue
+                            
+                        # Calculate similarity score using the model
+                        answer_embedding = model.encode([student_answer])
+                        question_embedding = model.encode([question["question_text"]])
+                        similarity = float(util.pytorch_cos_sim(answer_embedding, question_embedding)[0][0])
+                        
+                        # Convert similarity to score (0-100)
+                        question_score = int(similarity * question["marks"])
+                        total_score += question_score
+                        
+                        feedback.append(f"Q{q_idx + 1}: {question_score}/{question['marks']} - " + 
+                                     ("Good understanding shown." if similarity > 0.8 else 
+                                      "Partial understanding shown." if similarity > 0.5 else 
+                                      "Review this topic."))
+                    
+                    results["results"][student_id] = {
+                        "status": "success",
+                        "student_id": student_id,
+                        "mark": f"{total_score}/100",
+                        "feedback": "\n".join(feedback)
+                    }
+            
+            # Update submissions with AI grades
+            for submission_id, result in results["results"].items():
+                if result["status"] == "success":
+                    grade = float(result["mark"].split("/")[0])
+                    batch = db.batch()
+                    
+                    # Update main submission status
+                    batch.update(assignment_ref, {
+                        f"submissions.{submission_id}.status": "graded",
+                        f"submissions.{submission_id}.grade": grade,
+                        f"submissions.{submission_id}.feedback": result["feedback"],
+                        f"submissions.{submission_id}.gradedBy": "AI"
+                    })
+                    
+                    # Update submission in subcollection
+                    submission_ref = submissions_ref.document(submission_id)
+                    batch.update(submission_ref, {
+                        "status": "graded",
+                        "grade": grade,
+                        "feedback": result["feedback"],
+                        "gradedBy": "AI"
+                    })
+                    
+                    batch.commit()
+            
+            return results
+                    
+        except Exception as e:
+            logger.error(f"AI grading error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"AI grading failed: {str(e)}")
+    else:
+        # Manual review mode - just mark as ready for review
+        assignment_ref = db.collection("classrooms").document(classroom_id)\
+                        .collection("assignments").document(assignment_id)
+        assignment_data = assignment_ref.get().to_dict()
+        results = {
+            "status": "success",
+            "results": {
+                submission_id: {
+                    "status": "pending_review",
+                    "student_id": student_id,
+                }
+                for student_id, submission_id in assignment_data.get("submissions", {}).items()
+            }
+        }
     
     # Update grades in Firestore
     assignment_ref = db.collection("classrooms").document(classroom_id)\
@@ -542,9 +695,10 @@ async def grade_assignment(
         if result.get("status") == "success":
             assignment_ref.set({
                 f"submissions.{result['student_id']}": {
-                    "status": "graded",
-                    "grade": float(result["mark"].split("/")[0]),  # Convert "X/Y" to number
-                    "feedback": result["feedback"]
+                    "status": "graded" if request.useAI else "pending_review",
+                    "grade": float(result["mark"].split("/")[0]) if request.useAI else None,
+                    "feedback": result["feedback"] if request.useAI else None,
+                    "gradedBy": "AI" if request.useAI else None
                 }
             }, merge=True)
     
@@ -669,6 +823,228 @@ async def join_classroom(
     })
     
     return {"id": classroom_id, **classroom_data}
+
+@app.get("/api/submissions/{assignment_id}")
+async def get_submissions(
+    assignment_id: str,
+    classroom_id: str,  # Now a required query parameter
+    user_id: str = Depends(get_user_id)
+):
+    try:
+        # Get classroom and verify teacher access
+        classroom_ref = db.collection("classrooms").document(classroom_id)
+        classroom = classroom_ref.get()
+        if not classroom.exists:
+            raise HTTPException(status_code=404, detail="Classroom not found")
+        
+        if classroom.to_dict()["teacherId"] != user_id:
+            raise HTTPException(status_code=403, detail="Only teachers can view all submissions")
+
+        # Get assignment submissions
+        assignment_ref = classroom_ref.collection("assignments").document(assignment_id)
+        assignment_doc = assignment_ref.get()
+        
+        if not assignment_doc.exists:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        
+        assignment_data = assignment_doc.to_dict()
+        submissions = assignment_data.get("submissions", {})
+        
+        # Format submissions with student details
+        formatted_submissions = []
+        for student_id, submission in submissions.items():
+            student_ref = db.collection("users").document(student_id).get()
+            if student_ref.exists:
+                student_data = student_ref.to_dict()
+                formatted_submissions.append({
+                    "id": student_id,
+                    "student_name": student_data.get("name", "Unknown"),
+                    "student_email": student_data.get("email", "Unknown"),
+                    "submissionDate": submission.get("submittedAt"),
+                    "status": submission.get("status", "pending_review"),
+                    "grade": submission.get("grade"),
+                    "feedback": submission.get("feedback"),
+                    "answerText": submission.get("answerText"),
+                    "fileUrl": submission.get("fileUrl"),
+                    "gradedBy": submission.get("gradedBy")
+                })
+        
+        return formatted_submissions
+    except Exception as e:
+        logger.error(f"Error fetching submissions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/download-assignment-pdf")
+async def download_assignment_pdf(
+    assignment_id: str,
+    include_answers: bool = False,
+    user_id: str = Depends(get_user_id)
+):
+    """Download assignment as PDF"""
+    try:
+        # Get assignment data from Firestore
+        assignment_ref = db.collection("assignments").document(assignment_id)
+        assignment_doc = assignment_ref.get()
+        
+        if not assignment_doc.exists:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+            
+        assignment_data = assignment_doc.to_dict()
+        
+        # Check permissions
+        classroom_ref = db.collection("classrooms").document(assignment_data["classroom_id"])
+        classroom_doc = classroom_ref.get()
+        classroom_data = classroom_doc.to_dict()
+        
+        if not classroom_data:
+            raise HTTPException(status_code=404, detail="Classroom not found")
+            
+        # Only teachers can see answers
+        if include_answers and classroom_data["teacherId"] != user_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view answers")
+        
+        # Generate PDF using the AssignmentGenerator
+        generator = AssignmentGenerator()
+        pdf_path = generator.create_pdf(assignment_data, include_answers)
+        
+        if not pdf_path:
+            raise HTTPException(status_code=500, detail="Failed to generate PDF")
+        
+        # Create descriptive filename
+        filename = f"{assignment_data['title'].replace(' ', '_')}_{assignment_id}.pdf"
+        
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=filename
+        )
+    except Exception as e:
+        logger.error(f"Error generating PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/classrooms/{classroom_id}/assignments/{assignment_id}")
+async def get_assignment(
+    classroom_id: str,
+    assignment_id: str,
+    user_id: str = Depends(get_user_id)
+):
+    # Get the assignment document
+    assignment_ref = db.collection("classrooms").document(classroom_id)\
+                      .collection("assignments").document(assignment_id)
+    assignment_doc = assignment_ref.get()
+
+    if not assignment_doc.exists:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # Get classroom to verify access
+    classroom = db.collection("classrooms").document(classroom_id).get()
+    if not classroom.exists:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+
+    classroom_data = classroom.to_dict()
+    # Verify user has access (is teacher or enrolled student)
+    if (classroom_data["teacherId"] != user_id and 
+        user_id not in classroom_data.get("students", {})):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return {
+        "id": assignment_id,
+        "classroomId": classroom_id,
+        **assignment_doc.to_dict()
+    }
+
+@app.post("/api/classrooms/{classroom_id}/assignments/{assignment_id}/submissions/{student_id}/grade")
+async def grade_submission(
+    classroom_id: str,
+    assignment_id: str,
+    student_id: str,
+    grade_data: dict,
+    user_id: str = Depends(get_user_id)
+):
+    try:
+        # Verify teacher access
+        classroom = db.collection("classrooms").document(classroom_id).get()
+        if not classroom.exists or classroom.to_dict()["teacherId"] != user_id:
+            raise HTTPException(status_code=403, detail="Only teachers can grade submissions")
+
+        # Update submission grade
+        assignment_ref = db.collection("classrooms").document(classroom_id)\
+                          .collection("assignments").document(assignment_id)
+        submission_ref = assignment_ref.collection("submissions").document(student_id)
+
+        # Update both submission locations (main document and subcollection)
+        batch = db.batch()
+        
+        # Update main submission status
+        batch.update(assignment_ref, {
+            f"submissions.{student_id}.status": "graded",
+            f"submissions.{student_id}.grade": grade_data["grade"],
+            f"submissions.{student_id}.feedback": grade_data["feedback"],
+            f"submissions.{student_id}.gradedBy": "teacher"
+        })
+
+        # Update detailed submission
+        batch.update(submission_ref, {
+            "status": "graded",
+            "grade": grade_data["grade"],
+            "feedback": grade_data["feedback"],
+            "gradedBy": "teacher"
+        })
+
+        batch.commit()
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error grading submission: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/classrooms/{classroom_id}/assignments/{assignment_id}/submissions/{student_id}")
+async def get_submission_details(
+    classroom_id: str,
+    assignment_id: str,
+    student_id: str,
+    user_id: str = Depends(get_user_id)
+):
+    """Get detailed submission information for a specific student"""
+    try:
+        # Verify classroom access
+        classroom = db.collection("classrooms").document(classroom_id).get()
+        if not classroom.exists:
+            raise HTTPException(status_code=404, detail="Classroom not found")
+        
+        classroom_data = classroom.to_dict()
+        is_teacher = classroom_data["teacherId"] == user_id
+        
+        # Only allow teachers or the submission owner to view
+        if not (is_teacher or user_id == student_id):
+            raise HTTPException(status_code=403, detail="Not authorized to view this submission")
+
+        # Get assignment and submission
+        assignment_ref = db.collection("classrooms").document(classroom_id)\
+                          .collection("assignments").document(assignment_id)
+        submission_ref = assignment_ref.collection("submissions").document(student_id)
+        
+        submission_doc = submission_ref.get()
+        if not submission_doc.exists:
+            raise HTTPException(status_code=404, detail="Submission not found")
+        
+        submission_data = submission_doc.to_dict()
+
+        # Get student details
+        student_ref = db.collection("users").document(student_id)
+        student_doc = student_ref.get()
+        student_data = student_doc.to_dict() if student_doc.exists else {}
+
+        # Combine submission data with student info
+        return {
+            "id": student_id,
+            "student_name": student_data.get("name", "Unknown"),
+            "student_email": student_data.get("email", "Unknown"),
+            **submission_data
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching submission details: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=5049)

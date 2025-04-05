@@ -209,7 +209,6 @@ class customPDF(FPDF):
         
         self.set_text_color(0, 0, 0)  # Reset text color
 
-
     def add_timeline(self, weeks):
         """Add a visual timeline for the course"""
         self.ln(5)
@@ -219,6 +218,7 @@ class customPDF(FPDF):
         self.set_text_color(52, 152, 219)
         self.cell(0, 10, "Course Timeline", 0, 1, 'L')
         self.ln(2)
+
         
         # Timeline
         total_width = 170
