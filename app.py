@@ -24,8 +24,21 @@ import torch
 # pip install firebase-admin fastapi uvicorn pydantic
 
 # Initialize Firebase Admin SDK
-cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
-firebase_admin.initialize_app(cred)
+try:
+    # Get credentials from environment variable
+    firebase_creds_json = os.environ.get('FIREBASE_ADMIN_CREDENTIALS')
+    if not firebase_creds_json:
+        # Fallback to local file for development
+        cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
+    else:
+        # Use credentials from environment variable
+        cred_dict = json.loads(firebase_creds_json)
+        cred = credentials.Certificate(cred_dict)
+    
+    firebase_admin.initialize_app(cred)
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase: {str(e)}")
+    raise
 
 db = firestore.client()
 app = FastAPI()
