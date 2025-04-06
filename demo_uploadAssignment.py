@@ -15,7 +15,8 @@ from datetime import datetime
 import re
 from firebase_admin import firestore
 import numpy as np
-
+import base64
+import json
 # Define the ChromaDB path in a single place
 CHROMA_DB_PATH = os.path.abspath("./chroma_db")
 
@@ -30,9 +31,23 @@ class UploadAssignment:
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2') # Initialize SentenceTransformer
 
         # Initialize Firebase
-        cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
-        if not firebase_admin._apps:
+        try:
+            firebase_creds_base64 = os.environ.get('FIREBASE_ADMIN_CREDENTIALS_B64')
+    
+            if not firebase_creds_base64:
+                # Fallback to local file for development
+                cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
+            else:
+                # Decode and load credentials from base64
+                decoded_json = base64.b64decode(firebase_creds_base64).decode("utf-8")
+                cred_dict = json.loads(decoded_json)
+                cred = credentials.Certificate(cred_dict)
+
             firebase_admin.initialize_app(cred)
+
+        except Exception as e:
+            print(f"Failed to initialize Firebase: {str(e)}")
+            raise
         self.db = firestore.client()
         self.submissions_collection = self.db.collection('submissions')
 

@@ -7,7 +7,7 @@ from firebase_admin import credentials, firestore
 import chromadb, re, json
 from sentence_transformers import SentenceTransformer
 import numpy as np
-
+import base64
 # Import the ChromaDB path from uplaod_assignment.py
 from demo_uploadAssignment import CHROMA_DB_PATH
 
@@ -36,9 +36,23 @@ class AssignmentChecker:
         self.gemini_model = genai.GenerativeModel('gemini-2.0-flash')
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-        cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
-        if not firebase_admin._apps:
+        try:
+            firebase_creds_base64 = os.environ.get('FIREBASE_ADMIN_CREDENTIALS_B64')
+    
+            if not firebase_creds_base64:
+                # Fallback to local file for development
+                cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
+            else:
+                # Decode and load credentials from base64
+                decoded_json = base64.b64decode(firebase_creds_base64).decode("utf-8")
+                cred_dict = json.loads(decoded_json)
+                cred = credentials.Certificate(cred_dict)
+
             firebase_admin.initialize_app(cred)
+
+        except Exception as e:
+            print(f"Failed to initialize Firebase: {str(e)}")
+            raise
         self.db = firestore.client()
         self.submissions_collection = self.db.collection('submissions')
 

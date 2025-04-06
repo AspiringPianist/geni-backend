@@ -46,10 +46,15 @@ except Exception as e:
 db = firestore.client()
 app = FastAPI()
 
-# Update CORS settings to allow all origins
+# Update CORS settings
+origins = [
+    "http://localhost:5173",  # Development
+    "https://geni-frontend-green.vercel.app",  # Replace with your Vercel URL
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -366,20 +371,14 @@ async def send_message(message: Message, user_id: str = Depends(get_user_id)):
 #   return data;
 # }
 
-@app.get("/health")
+@app.get("/")
 async def health_check():
     """Health check endpoint"""
-    try:
-        return {
-            "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "version": "1.0.0",
-            "service": "Tibby Backend API",
-            "port": os.environ.get("PORT", 5049)
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return {"status": "unhealthy", "error": str(e)}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0"
+    }
 
 @app.get("/messages/{chat_id}", response_model=List[Dict[str, Any]])
 async def get_messages(chat_id: str):
@@ -1071,18 +1070,4 @@ async def get_submission_details(
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5049))
-    logger.info(f"Starting server on port {port}")
-    
-    # In development, bind to localhost for direct access
-    # In production (Railway), bind to 0.0.0.0 but access via localhost
-    host = "127.0.0.1" if os.environ.get("RAILWAY_ENVIRONMENT") != "production" else "0.0.0.0"
-    logger.info(f"Binding to host: {host}")
-    
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info",
-        proxy_headers=True,
-        forwarded_allow_ips="*"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port)
