@@ -1070,9 +1070,14 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5049))
     logger.info(f"Starting server on port {port}")
     
+    # In development, bind to localhost for direct access
+    # In production (Railway), bind to 0.0.0.0 but access via localhost
+    host = "127.0.0.1" if os.environ.get("RAILWAY_ENVIRONMENT") != "production" else "0.0.0.0"
+    logger.info(f"Binding to host: {host}")
+    
     uvicorn.run(
         app,
-        host="0.0.0.0",
+        host=host,
         port=port,
         log_level="info",
         proxy_headers=True,

@@ -6,8 +6,10 @@ buildCommand = "pip install -r requirements.txt"
 startCommand = "python -m uvicorn app:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/"
 healthcheckTimeout = 300
+healthcheckHost = "127.0.0.1"  # Use localhost for health checks
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
 
 [env]
 PYTHON_VERSION = "3.12.9"
+RAILWAY_ENVIRONMENT = "production"
