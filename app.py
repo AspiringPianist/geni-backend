@@ -363,7 +363,7 @@ async def send_message(message: Message, user_id: str = Depends(get_user_id)):
 #   return data;
 # }
 
-@app.get("/")
+@app.get("/health")
 async def health_check():
     """Health check endpoint"""
     try:
