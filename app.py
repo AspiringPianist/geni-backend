@@ -354,9 +354,15 @@ async def send_message(message: Message, user_id: str = Depends(get_user_id)):
 #   const data = await response.json();
 #   return data;
 # }
+
 @app.get("/")
-async def hello_world():
-    return {"message": "Hello, World!"}
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0"
+    }
 
 @app.get("/messages/{chat_id}", response_model=List[Dict[str, Any]])
 async def get_messages(chat_id: str):
@@ -1047,4 +1053,5 @@ async def get_submission_details(
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=5049)
+    port = int(os.environ.get("PORT", 5049))
+    uvicorn.run(app, host="0.0.0.0", port=port)
