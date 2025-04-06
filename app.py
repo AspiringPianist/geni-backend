@@ -37,7 +37,7 @@ try:
     
     firebase_admin.initialize_app(cred)
 except Exception as e:
-    logger.error(f"Failed to initialize Firebase: {str(e)}")
+    print(f"Failed to initialize Firebase: {str(e)}")
     raise
 
 db = firestore.client()
@@ -47,6 +47,7 @@ app = FastAPI()
 origins = [
     "http://localhost:5173",  # Development
     "https://geni-frontend-green.vercel.app",  # Replace with your Vercel URL
+    "https://tibbymvp-production.up.railway.app"  # Add your Railway domain
 ]
 
 app.add_middleware(
@@ -374,7 +375,8 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "service": "Tibby Backend API"
     }
 
 @app.get("/messages/{chat_id}", response_model=List[Dict[str, Any]])
