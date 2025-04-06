@@ -19,23 +19,26 @@ import random
 import string
 import json
 from sentence_transformers import SentenceTransformer, util
+import base64
 import torch
 # Pip installs:
 # pip install firebase-admin fastapi uvicorn pydantic
 
 # Initialize Firebase Admin SDK
 try:
-    # Get credentials from environment variable
-    firebase_creds_json = os.environ.get('FIREBASE_ADMIN_CREDENTIALS')
-    if not firebase_creds_json:
+    firebase_creds_base64 = os.environ.get('FIREBASE_ADMIN_CREDENTIALS_B64')
+    
+    if not firebase_creds_base64:
         # Fallback to local file for development
         cred = credentials.Certificate("tibby-teach-firebase-adminsdk-fbsvc-a51c5b7b7b.json")
     else:
-        # Use credentials from environment variable
-        cred_dict = json.loads(firebase_creds_json)
+        # Decode and load credentials from base64
+        decoded_json = base64.b64decode(firebase_creds_base64).decode("utf-8")
+        cred_dict = json.loads(decoded_json)
         cred = credentials.Certificate(cred_dict)
-    
+
     firebase_admin.initialize_app(cred)
+
 except Exception as e:
     print(f"Failed to initialize Firebase: {str(e)}")
     raise
