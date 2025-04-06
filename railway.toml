@@ -3,7 +3,7 @@ builder = "nixpacks"
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
-startCommand = "python -m uvicorn app:app --host 0.0.0.0 --port $PORT"
+startCommand = "python -m uvicorn app:app --host 0.0.0.0 --port 5049"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 healthcheckHost = "127.0.0.1"  # Use localhost for health checks
